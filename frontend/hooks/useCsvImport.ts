@@ -121,15 +121,24 @@ export function useCsvImport() {
             }
 
             if (data.done) {
-              setImportResult({
-                results: data.results,
-                stats: {
-                  total: data.results.length,
-                  imported: data.totalImported,
-                  skipped: data.totalSkipped,
-                },
+              setProgress({
+                current: totalRows,
+                total: totalRows,
+                percentage: 100,
+                stage: "Import completed successfully! Rendering report...",
               });
-              setStatus("done");
+
+              setTimeout(() => {
+                setImportResult({
+                  results: data.results,
+                  stats: {
+                    total: data.results.length,
+                    imported: data.totalImported,
+                    skipped: data.totalSkipped,
+                  },
+                });
+                setStatus("done");
+              }, 750);
             }
 
             if (data.error) {
