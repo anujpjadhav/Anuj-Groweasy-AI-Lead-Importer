@@ -9,8 +9,8 @@ This repository implements a highly optimized web interface designed to handle m
 ## 🚀 Submission Details
 
 *   **Position:** Software Developer (Intern / Full-Time)
-*   **Hosted Application URL:** `[Insert your deployment URL here]`
-*   **GitHub Repository URL:** `[Insert your public GitHub repository URL here]`
+*   **Hosted Application URL:** https://anuj-groweasy-ai-lead-importer-fxb36sty0.vercel.app/
+*   **GitHub Repository URL:** https://github.com/anujpjadhav/Anuj-Groweasy-AI-Lead-Importer
 *   **Submission Date:** July 12, 2026
 *   **Recipient:** varun@groweasy.ai
 
