@@ -57,132 +57,93 @@ export function useCsvImport() {
       current: 0,
       total: parsedData.rows.length,
       percentage: 0,
-      stage: "Initializing connection...",
+      stage: "Connecting to mapping engine...",
     });
 
-    const totalRows = parsedData.rows.length;
-    // Simulate batch processing (batches of 15 rows)
-    const batchSize = 15;
-    const totalBatches = Math.ceil(totalRows / batchSize);
-    const mockResults: ImportResultItem[] = [];
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-    // Helper helper to match case-insensitive fields
-    const getVal = (row: Record<string, string>, keys: string[]) => {
-      const foundKey = Object.keys(row).find((k) =>
-        keys.includes(k.toLowerCase().trim().replace(/[\s_-]+/g, ""))
-      );
-      return foundKey ? row[foundKey] : "";
-    };
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+      const response = await fetch(`${backendUrl}/api/import`, {
+        method: "POST",
+        body: formData,
+      });
 
-    // Process batches with intervals to show the loading states
-    for (let b = 0; b < totalBatches; b++) {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to parse import on backend.");
+      }
 
-      const start = b * batchSize;
-      const end = Math.min(start + batchSize, totalRows);
-      const batchRows = parsedData.rows.slice(start, end);
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) {
+        throw new Error("Unable to read streaming response from backend.");
+      }
 
-      batchRows.forEach((row, index) => {
-        const globalIndex = start + index;
+      let buffer = "";
+      const totalRows = parsedData.rows.length;
 
-        // Extract key fields (case-insensitive fuzzy match)
-        const nameVal = getVal(row, ["name", "fullname", "username", "leadname", "contactname", "customername"]);
-        const emailVal = getVal(row, ["email", "emailaddress", "mail", "primaryemail"]);
-        const phoneVal = getVal(row, ["phone", "phonenumber", "mobile", "mobilenumber", "contactno", "tel"]);
-        const companyVal = getVal(row, ["company", "companyname", "organization", "org"]);
-        const cityVal = getVal(row, ["city", "town"]);
-        const stateVal = getVal(row, ["state", "province", "region"]);
-        const countryVal = getVal(row, ["country", "nation"]);
-        const crmStatusVal = getVal(row, ["crmstatus", "status", "leadstatus"]);
-        const crmNoteVal = getVal(row, ["crmnote", "notes", "note", "comment"]);
-        const sourceVal = getVal(row, ["datasource", "source", "leadsource"]);
-        const descriptionVal = getVal(row, ["description", "about", "info"]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-        const hasEmail = !!emailVal;
-        const hasPhone = !!phoneVal;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
 
-        if (!hasEmail && !hasPhone) {
-          mockResults.push({
-            row_index: globalIndex,
-            action: "SKIP",
-            reason: "Row lacks both an email and a phone number.",
-          });
-        } else {
-          // Parse phone number split (mock logic)
-          let countryCode = "";
-          let mobileNum = phoneVal;
-          if (phoneVal) {
-            const cleanPhone = phoneVal.replace(/[\s-()]/g, "");
-            if (cleanPhone.startsWith("+")) {
-              // Extract +XX or +XXX
-              const match = cleanPhone.match(/^(\+\d{1,3})(\d{10})$/);
-              if (match) {
-                countryCode = match[1];
-                mobileNum = match[2];
-              } else {
-                countryCode = cleanPhone.slice(0, 3);
-                mobileNum = cleanPhone.slice(3);
-              }
-            } else if (cleanPhone.length > 10) {
-              // assume first few digits are country code
-              countryCode = "+" + cleanPhone.slice(0, cleanPhone.length - 10);
-              mobileNum = cleanPhone.slice(cleanPhone.length - 10);
-            } else if (cleanPhone.length === 10) {
-              countryCode = "+91"; // Default to India context per spec
-              mobileNum = cleanPhone;
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data: ")) continue;
+
+          const jsonStr = line.substring(6).trim();
+          try {
+            const data = JSON.parse(jsonStr);
+
+            if (data.event === "connected") {
+              setProgress((prev) => ({
+                ...prev,
+                stage: "CSV parser uploaded. Initializing AI batches...",
+              }));
             }
+
+            if (data.event === "progress") {
+              const BATCH_SIZE = 5;
+              const currentProcessed = typeof data.completedCount === "number"
+                ? data.completedCount
+                : Math.min(data.completedBatches * BATCH_SIZE, totalRows);
+              setProgress({
+                current: currentProcessed,
+                total: totalRows,
+                percentage: data.percentage,
+                stage: data.stage || `Extracting & Mapping records (Batch ${data.completedBatches}/${data.totalBatches} completed)...`,
+              });
+            }
+
+            if (data.done) {
+              setImportResult({
+                results: data.results,
+                stats: {
+                  total: data.results.length,
+                  imported: data.totalImported,
+                  skipped: data.totalSkipped,
+                },
+              });
+              setStatus("done");
+            }
+
+            if (data.error) {
+              throw new Error(data.error);
+            }
+          } catch (jsonErr) {
+            console.error("Failed to parse SSE JSON chunk:", jsonErr);
           }
-
-          // Map into CRMRecord
-          const record: CRMRecord = {
-            created_at: new Date().toISOString(),
-            name: nameVal || "Anonymous Lead",
-            email: emailVal,
-            country_code: countryCode,
-            mobile_without_country_code: mobileNum,
-            company: companyVal,
-            city: cityVal,
-            state: stateVal,
-            country: countryVal || (countryCode === "+91" ? "India" : ""),
-            lead_owner: "AI Auto-Assigned",
-            crm_status: crmStatusVal ? crmStatusVal.toUpperCase() : "GOOD_LEAD_FOLLOW_UP",
-            crm_note: crmNoteVal || "Imported via CSV file.",
-            data_source: sourceVal || "leads_on_demand",
-            possession_time: "",
-            description: descriptionVal,
-          };
-
-          mockResults.push({
-            row_index: globalIndex,
-            action: "IMPORT",
-            record,
-          });
         }
-      });
-
-      const currentProcessed = end;
-      const percentage = Math.round((currentProcessed / totalRows) * 100);
-      setProgress({
-        current: currentProcessed,
-        total: totalRows,
-        percentage,
-        stage: `Analyzing & Mapping records (Processed ${currentProcessed}/${totalRows})...`,
-      });
+      }
+    } catch (err: any) {
+      setError(err?.message || "Import failed during execution.");
+      setStatus("error");
     }
-
-    // Final wrapping step
-    setProgress((prev) => ({ ...prev, stage: "Finalizing import summary..." }));
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
-    const total = mockResults.length;
-    const imported = mockResults.filter((r) => r.action === "IMPORT").length;
-    const skipped = mockResults.filter((r) => r.action === "SKIP").length;
-
-    setImportResult({
-      results: mockResults,
-      stats: { total, imported, skipped },
-    });
-    setStatus("done");
   }, [parsedData, file]);
 
   return {
