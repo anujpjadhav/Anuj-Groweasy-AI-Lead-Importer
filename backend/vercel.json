@@ -1,0 +1,3 @@
+{
+  "comment": "This backend is an Express SSE streaming server. It CANNOT run on Vercel serverless functions due to long-running SSE connections. Deploy this backend to Render using the render.yaml at the project root."
+}
